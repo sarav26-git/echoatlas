@@ -14,7 +14,7 @@ from telegram.ext import (
     filters,
 )
 
-sys.path.append(str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from song_metadata_bot import (
     start,
