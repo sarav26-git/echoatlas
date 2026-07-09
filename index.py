@@ -1,83 +1,65 @@
-import asyncio
-import json
 import os
+import sys
+from pathlib import Path
 
+from fastapi import FastAPI, HTTPException, Request
 from telegram import Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
-from song_metadata_bot import TELEGRAM_TOKEN, build_application, logger
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-_telegram_app = None
-_telegram_app_ready = False
+from song_metadata_bot import (
+    start,
+    help_command,
+    handle_song_search,
+    handle_song_selection,
+)
+
+TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
+
+app = FastAPI()
+
+telegram_app = (
+    Application.builder()
+    .token(TELEGRAM_TOKEN)
+    .build()
+)
+
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CommandHandler("help", help_command))
+telegram_app.add_handler(
+    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_song_search)
+)
+telegram_app.add_handler(CallbackQueryHandler(handle_song_selection))
 
 
-def _get_telegram_app():
-    global _telegram_app
-    if _telegram_app is None:
-        _telegram_app = build_application()
-    return _telegram_app
+@app.get("/")
+async def home():
+    return {"status": "EchoAtlas is online"}
 
 
-async def _dispatch_update(payload):
-    telegram_app = _get_telegram_app()
-    global _telegram_app_ready
-    if not _telegram_app_ready:
+@app.post("/webhook")
+async def webhook(request: Request):
+    received_secret = request.headers.get(
+        "X-Telegram-Bot-Api-Secret-Token"
+    )
+
+    if received_secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
+    if not telegram_app._initialized:
         await telegram_app.initialize()
-        _telegram_app_ready = True
-    try:
-        update = Update.de_json(payload, telegram_app.bot)
-        await telegram_app.process_update(update)
-    except Exception:
-        raise
 
+    update_data = await request.json()
+    update = Update.de_json(update_data, telegram_app.bot)
 
-def _json_response(body, status=200):
-    return {
-        "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(body),
-    }
+    await telegram_app.process_update(update)
 
-
-def handler(request):
-    if TELEGRAM_TOKEN in {"", "YOUR_TELEGRAM_BOT_TOKEN", "ENTER_TEL_TOKEN"}:
-        return _json_response({"ok": False, "error": "Telegram token is not configured"}, 500)
-
-    method = getattr(request, "method", "GET").upper()
-    if method == "GET":
-        return _json_response({"ok": True, "service": "echoatlas-bot"})
-    if method != "POST":
-        return _json_response({"ok": False, "error": "Method not allowed"}, 405)
-
-    secret_token = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
-    if secret_token:
-        incoming_secret = ""
-        headers = getattr(request, "headers", {}) or {}
-        if hasattr(headers, "get"):
-            incoming_secret = headers.get("x-telegram-bot-api-secret-token", "")
-        elif isinstance(headers, dict):
-            incoming_secret = headers.get("x-telegram-bot-api-secret-token", "")
-        if incoming_secret != secret_token:
-            return _json_response({"ok": False, "error": "Unauthorized"}, 403)
-
-    payload = None
-    if hasattr(request, "json"):
-        payload = request.json
-    if payload is None and hasattr(request, "body"):
-        raw_body = request.body
-        if isinstance(raw_body, bytes):
-            raw_body = raw_body.decode("utf-8")
-        if raw_body:
-            payload = json.loads(raw_body)
-    if not payload:
-        return _json_response({"ok": False, "error": "Missing JSON payload"}, 400)
-
-    try:
-        asyncio.run(_dispatch_update(payload))
-    except Exception as exc:
-        logger.exception("Webhook dispatch failed")
-        return _json_response({"ok": False, "error": str(exc)}, 500)
-
-    return _json_response({"ok": True})
-
-
-app = handler
+    return {"ok": True}
