@@ -4,7 +4,7 @@ import traceback
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -27,10 +27,14 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 
 if not TELEGRAM_TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN is missing in Vercel environment variables")
+    raise RuntimeError(
+        "TELEGRAM_BOT_TOKEN is missing in Vercel environment variables"
+    )
 
 if not WEBHOOK_SECRET:
-    raise RuntimeError("WEBHOOK_SECRET is missing in Vercel environment variables")
+    raise RuntimeError(
+        "WEBHOOK_SECRET is missing in Vercel environment variables"
+    )
 
 app = FastAPI()
 
@@ -46,7 +50,10 @@ telegram_app.add_handler(CallbackQueryHandler(handle_song_selection))
 
 @app.get("/")
 async def home():
-    return {"status": "EchoAtlas is online"}
+    return RedirectResponse(
+        url="https://t.me/echoatlasbot",
+        status_code=307,
+    )
 
 
 @app.post("/webhook")
@@ -57,7 +64,10 @@ async def webhook(request: Request):
         )
 
         if received_secret != WEBHOOK_SECRET:
-            raise HTTPException(status_code=403, detail="Invalid webhook secret")
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid webhook secret",
+            )
 
         if not telegram_app._initialized:
             await telegram_app.initialize()
