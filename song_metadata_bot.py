@@ -47,7 +47,9 @@ GENIUS_ACCESS_TOKEN = os.getenv("GENIUS_ACCESS_TOKEN", "")
 COMPILATION_RE = re.compile(
     r"\b(hits|best of|greatest|collection|playlist|vol\.|volume|"
     r"compilation|anthology|essentials|now that'?s|top\s*\d|"
-    r"\d+\s*%|nrj|universal music)\b",
+    r"\d+\s*%|nrj|universal music|promo|promo only|"
+    r"modern rock radio|radio edit|radio|sampler|"
+    r"now playing|soundtrack|deluxe edition)\b",
     re.IGNORECASE,
 )
 
@@ -472,7 +474,7 @@ class SongMetadataFetcher:
             if description:
                 result["description"] = SongMetadataFetcher._clean_about(description)
 
-            # ── Lyrics: lyrics.ovh ──────────
+            # ── Lyrics: lyrics.ovh (free, no key, Vercel-safe) ──────────
             lyrics_fetched = SongMetadataFetcher._fetch_lyrics_ovh(
                 artist, track
             )
@@ -603,7 +605,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎵 <b>EchoAtlas Help</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "1. Send a song title with artist\n"
         "2. Select your query\n"
         "3. Tap <b>📝 Wanna Sing Along?</b> for lyrics inside Telegram\n\n"
@@ -690,7 +692,6 @@ async def handle_song_search(
         buttons = []
         if metadata.get("lyrics"):
             buttons.append([InlineKeyboardButton("📝 Wanna Sing Along?", callback_data="show_lyrics")])
-
         await loading_message.edit_text(
             message,
             parse_mode="HTML",
