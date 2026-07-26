@@ -1,7 +1,7 @@
 """
 Project Name: EchoAtlas
 Project Type: Telegram Bot
-Integrations for References: MusicBrainz, Wikipedia, Genius
+Integrations for References: MusicBrainz, Wikipedia, Genius, Lyrics.ovh
 
 By @sarav26-git
 """
@@ -88,8 +88,16 @@ class SongMetadataFetcher:
                 response.raise_for_status()
                 recordings = response.json().get("recordings", [])
 
+            VARIANT_RE = re.compile(
+                r"(acoustic|live|demo|instrumental|remix|edit|cover|"
+                r"version|remaster|remastered|reprise|karaoke|radio|"
+                r"extended|mix|flip|rework|stripped|session|unplugged)",
+                re.IGNORECASE,
+            )
+
             results = []
-            seen    = set()
+            seen_base = set()  # deduplicate by base title+artist (no variants)
+            seen_full = set()  # deduplicate exact duplicates
 
             for recording in recordings:
                 credits = recording.get("artist-credit", [])
@@ -107,12 +115,18 @@ class SongMetadataFetcher:
 
                 title  = recording.get("title", "").strip()
                 artist = artists[0].strip()
-                key    = f"{title.lower()}::{artist.lower()}"
 
-                if not title or key in seen:
+                if not title:
                     continue
 
-                seen.add(key)
+                # Skip variant versions (acoustic, live, remix, etc.)
+                if VARIANT_RE.search(title):
+                    continue
+
+                full_key = f"{title.lower()}::{artist.lower()}"
+                if full_key in seen_full:
+                    continue
+                seen_full.add(full_key)
 
                 results.append({
                     "id":               recording.get("id"),
@@ -123,6 +137,27 @@ class SongMetadataFetcher:
                 })
 
             results.sort(key=lambda item: item["score"], reverse=True)
+
+            # Filter: at least one word from the search input must appear
+            # in the song title — prevents returning songs where the artist
+            # name matches but the title is completely unrelated
+            input_words = set(
+                w.lower() for w in re.split(r"[\s\-]+", song_name)
+                if len(w) > 2
+            )
+
+            if input_words:
+                filtered = [
+                    r for r in results
+                    if any(
+                        w in r["title"].lower()
+                        for w in input_words
+                    )
+                ]
+                # Only apply filter if it leaves at least one result
+                if filtered:
+                    results = filtered
+
             return results[:10]
 
         except Exception as error:
@@ -437,7 +472,7 @@ class SongMetadataFetcher:
             if description:
                 result["description"] = SongMetadataFetcher._clean_about(description)
 
-            # ── Lyrics: lyrics.ovh (free, no key, Vercel-safe) ──────────
+            # ── Lyrics: lyrics.ovh ──────────
             lyrics_fetched = SongMetadataFetcher._fetch_lyrics_ovh(
                 artist, track
             )
@@ -557,11 +592,10 @@ class SongMetadataFetcher:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 <b>Welcome to EchoAtlas</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Search any song and get its artist, album, year, genre, "
-        "music context and clean in-app lyrics.\n\n"
-        "<b>Example:</b> <code>House Tour - Sabrina Carpenter</code>",
+        "👋 <b>Hey this is EchoAtlas</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Just enter the Song name with Artist and get it's metadata :)\n\n"
+        "<i>Keep this Format: Song - Artist</i>",
         parse_mode="HTML",
     )
 
@@ -571,12 +605,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎵 <b>EchoAtlas Help</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "1. Send a song title with artist\n"
-        "2. Select your choice\n"
+        "2. Select your query\n"
         "3. Tap <b>📝 Wanna Sing Along?</b> for lyrics inside Telegram\n\n"
-        "As EchoAtlas currently supports only Popular* Songs, some Regionals may have been missing from our Service.\nStay with us for Further Upgradation!\n\n"
-        "<b>Commands</b>\n"
+        "As EchoAtlas currently supports only Popular* Songs, some Regionals may have been missing. We'll look forward to expand our Dataset.\n\nStay with us for Further Upgradation!\n\n"
+        "<b>Commands:</b>\n"
         "/start — Start EchoAtlas\n"
-        "/help — Show this guide",
+        "/help — This Guide",
         parse_mode="HTML",
     )
 
@@ -588,7 +622,7 @@ async def handle_song_search(
     song_name = (update.message.text or "").strip()
 
     if not song_name:
-        await update.message.reply_text("Send a song name first.")
+        await update.message.reply_text("Send a song name first...")
         return
 
     loading_message = await update.message.reply_text(
@@ -600,16 +634,30 @@ async def handle_song_search(
 
     if not results:
         await loading_message.edit_text(
-            "❌ No songs found. Try adding the artist name.\n\n"
-            "<i>Example: House Tour - Sabrina Carpenter</i>",
+            "❌ Couldn't find <b>{}</b>.\n\n"
+            "Make sure the song title is correct:\n"
+            "<i>BLUE - Billie Eilish</i>\n"
+            "<i>Espresso - Sabrina Carpenter</i>".format(song_name),
             parse_mode="HTML",
         )
         return
 
     context.user_data["search_results"] = results
 
-    # Auto-select if top result is a perfect match (score 100)
-    if results[0].get("score", 0) == 100:
+    # Auto-select only when score is 100 AND title+artist match the input
+    top = results[0]
+    input_clean = song_name.lower().strip()
+    top_title   = top["title"].lower().strip()
+    top_artist  = top["artist"].lower().strip()
+    is_exact = (
+        top.get("score", 0) == 100
+        and (
+            top_title in input_clean
+            or input_clean in top_title
+            or top_artist in input_clean
+        )
+    )
+    if is_exact:
         await loading_message.edit_text("⏳ Building your music brief...")
         song = results[0]
         metadata = SongMetadataFetcher.get_detailed_metadata(
@@ -623,7 +671,7 @@ async def handle_song_search(
 
         message = (
             "<b>EchoAtlas Music Brief</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"📌 <b>Title:</b> {metadata['title']}\n"
             f"🎤 <b>Artist:</b> {artist_line}\n"
         )
@@ -642,8 +690,6 @@ async def handle_song_search(
         buttons = []
         if metadata.get("lyrics"):
             buttons.append([InlineKeyboardButton("📝 Wanna Sing Along?", callback_data="show_lyrics")])
-        if metadata.get("genius_url"):
-            buttons.append([InlineKeyboardButton("🔗 Open on Genius", url=metadata["genius_url"])])
 
         await loading_message.edit_text(
             message,
@@ -666,7 +712,7 @@ async def handle_song_search(
         ])
 
     await loading_message.edit_text(
-        "🎵 <b>Select the correct song</b>",
+        "🎵 <b>Select your Query</b>",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML",
     )
@@ -689,7 +735,7 @@ async def send_in_app_lyrics(query, metadata: Dict):
     header = f"📝 <b>{title}</b>"
     if artist:
         header += f" — {artist}"
-    header += "\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    header += "\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
     max_length = 3800
     chunks     = []
@@ -743,14 +789,14 @@ async def handle_song_selection(
     try:
         index = int(callback_data.split("_")[1])
     except (IndexError, ValueError):
-        await query.edit_message_text("❌ Invalid selection.")
+        await query.edit_message_text("Invalid selection!")
         return
 
     results = context.user_data.get("search_results", [])
 
     if index >= len(results):
         await query.edit_message_text(
-            "❌ This search expired. Search for the song again."
+            "Search session expired! Search again."
         )
         return
 
@@ -772,7 +818,7 @@ async def handle_song_selection(
 
     message = (
         "<b>EchoAtlas Music Brief</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📌 <b>Title:</b> {metadata['title']}\n"
         f"🎤 <b>Artist:</b> {artist_line}\n"
     )
@@ -803,14 +849,6 @@ async def handle_song_selection(
             InlineKeyboardButton(
                 "📝 Wanna Sing Along?",
                 callback_data="show_lyrics",
-            )
-        ])
-
-    if metadata.get("genius_url"):
-        buttons.append([
-            InlineKeyboardButton(
-                "🔗 Open on Genius",
-                url=metadata["genius_url"],
             )
         ])
 
