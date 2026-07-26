@@ -36,12 +36,12 @@ logging.basicConfig(
 logger = logging.getLogger("EchoAtlas")
 
 MUSICBRAINZ_API = "https://musicbrainz.org/ws/2"
-WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
-GENIUS_API = "https://api.genius.com"
+WIKIPEDIA_API   = "https://en.wikipedia.org/w/api.php"
+GENIUS_API      = "https://api.genius.com"
 
 USER_AGENT = "EchoAtlasBot/3.0 (Telegram music metadata bot)"
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_TOKEN      = os.getenv("TELEGRAM_BOT_TOKEN", "")
 GENIUS_ACCESS_TOKEN = os.getenv("GENIUS_ACCESS_TOKEN", "")
 
 COMPILATION_RE = re.compile(
@@ -63,9 +63,9 @@ class SongMetadataFetcher:
         """Search MusicBrainz and return selectable song results."""
         try:
             headers = {"User-Agent": USER_AGENT}
-            params = {
+            params  = {
                 "query": f'recording:"{song_name}"',
-                "fmt": "json",
+                "fmt":   "json",
                 "limit": 15,
             }
 
@@ -78,15 +78,10 @@ class SongMetadataFetcher:
             response.raise_for_status()
             recordings = response.json().get("recordings", [])
 
-            # Broader search if exact-title search is weak
             if len(recordings) < 2:
                 response = requests.get(
                     f"{MUSICBRAINZ_API}/recording/",
-                    params={
-                        "query": song_name,
-                        "fmt": "json",
-                        "limit": 15,
-                    },
+                    params={"query": song_name, "fmt": "json", "limit": 15},
                     headers=headers,
                     timeout=15,
                 )
@@ -94,7 +89,7 @@ class SongMetadataFetcher:
                 recordings = response.json().get("recordings", [])
 
             results = []
-            seen = set()
+            seen    = set()
 
             for recording in recordings:
                 credits = recording.get("artist-credit", [])
@@ -110,9 +105,9 @@ class SongMetadataFetcher:
                 if not artists:
                     continue
 
-                title = recording.get("title", "").strip()
+                title  = recording.get("title", "").strip()
                 artist = artists[0].strip()
-                key = f"{title.lower()}::{artist.lower()}"
+                key    = f"{title.lower()}::{artist.lower()}"
 
                 if not title or key in seen:
                     continue
@@ -120,11 +115,11 @@ class SongMetadataFetcher:
                 seen.add(key)
 
                 results.append({
-                    "id": recording.get("id"),
-                    "title": title,
-                    "artist": artist,
+                    "id":               recording.get("id"),
+                    "title":            title,
+                    "artist":           artist,
                     "featured_artists": artists[1:],
-                    "score": int(recording.get("score", 0)),
+                    "score":            int(recording.get("score", 0)),
                 })
 
             results.sort(key=lambda item: item["score"], reverse=True)
@@ -141,11 +136,11 @@ class SongMetadataFetcher:
             search_response = requests.get(
                 WIKIPEDIA_API,
                 params={
-                    "action": "query",
-                    "list": "search",
+                    "action":   "query",
+                    "list":     "search",
                     "srsearch": f'"{track}" {artist} song',
-                    "format": "json",
-                    "srlimit": 5,
+                    "format":   "json",
+                    "srlimit":  5,
                 },
                 timeout=15,
             )
@@ -164,8 +159,8 @@ class SongMetadataFetcher:
                     WIKIPEDIA_API,
                     params={
                         "action": "parse",
-                        "page": page_title,
-                        "prop": "text",
+                        "page":   page_title,
+                        "prop":   "text",
                         "format": "json",
                     },
                     timeout=15,
@@ -176,7 +171,7 @@ class SongMetadataFetcher:
                 if not parsed:
                     continue
 
-                soup = BeautifulSoup(parsed["text"]["*"], "html.parser")
+                soup    = BeautifulSoup(parsed["text"]["*"], "html.parser")
                 infobox = soup.find("table", class_="infobox")
 
                 if not infobox:
@@ -186,12 +181,12 @@ class SongMetadataFetcher:
 
                 for row in infobox.find_all("tr"):
                     heading = row.find("th")
-                    value = row.find("td")
+                    value   = row.find("td")
 
                     if not heading or not value:
                         continue
 
-                    key = heading.get_text(" ", strip=True).lower()
+                    key  = heading.get_text(" ", strip=True).lower()
                     text = value.get_text(" ", strip=True)
 
                     if "artist" in key:
@@ -200,11 +195,7 @@ class SongMetadataFetcher:
                             text,
                             flags=re.IGNORECASE,
                         )
-                        artist_parts = [
-                            part.strip()
-                            for part in artist_parts
-                            if part.strip()
-                        ]
+                        artist_parts = [p.strip() for p in artist_parts if p.strip()]
 
                         if artist_parts:
                             metadata["artist"] = artist_parts[0]
@@ -221,9 +212,9 @@ class SongMetadataFetcher:
 
                     elif "genre" in key:
                         genres = [
-                            genre.strip()
-                            for genre in re.split(r",|;|\n", text)
-                            if genre.strip()
+                            g.strip()
+                            for g in re.split(r",|;|\n", text)
+                            if g.strip()
                         ]
                         if genres:
                             metadata["genre"] = ", ".join(genres[:3])
@@ -268,43 +259,11 @@ class SongMetadataFetcher:
 
     @staticmethod
     def _clean_lyrics(lyrics: str) -> str:
-        """
-        Keeps only actual lyrics.
-        Removes Genius junk, contributor labels, descriptions and Read More.
-        """
+        """Strip all Genius chrome, keep only actual lyrics text."""
         if not lyrics:
             return ""
 
-        lyrics = BeautifulSoup(lyrics, "html.parser").get_text("\n")
-        lyrics = lyrics.replace("&amp;", "&").replace("&apos;", "'")
-        lyrics = lyrics.replace("&#x27;", "'")
-
-        lyrics = re.sub(
-            r"(?is)^\s*(?:"
-            r"\d+\s+(?:contributors?|translations?|comments?)\s*|"
-            r"translations?\s*|"
-            r"lyrics\s*|"
-            r"read more\s*"
-            r")+",
-            "",
-            lyrics,
-        )
-
-        # If Genius description leaked before actual lyric sections,
-        # retain from [Intro], [Verse], [Chorus], etc.
-        section_match = re.search(
-            r"(?m)^\[(?:"
-            r"intro|verse(?:\s+\d+)?|chorus|pre-chorus|post-chorus|"
-            r"bridge|outro|hook|refrain|interlude|breakdown"
-            r").*?\]\s*$",
-            lyrics,
-            flags=re.IGNORECASE,
-        )
-
-        if section_match:
-            lyrics = lyrics[section_match.start():]
-
-        # Remove repeated Genius UI junk lines
+        # Remove Genius UI junk lines
         junk_lines = re.compile(
             r"^(?:"
             r"\d+\s+(?:contributors?|translations?|comments?)|"
@@ -318,95 +277,81 @@ class SongMetadataFetcher:
             re.IGNORECASE,
         )
 
-        clean_lines = []
-
+        clean = []
         for line in lyrics.splitlines():
             line = line.strip()
-
             if not line:
-                if clean_lines and clean_lines[-1] != "":
-                    clean_lines.append("")
+                if clean and clean[-1] != "":
+                    clean.append("")
                 continue
-
             if junk_lines.match(line):
                 continue
+            clean.append(line)
 
-            clean_lines.append(line)
-
-        lyrics = "\n".join(clean_lines)
+        lyrics = "\n".join(clean)
         lyrics = re.sub(r"\n{3,}", "\n\n", lyrics).strip()
-
         return lyrics
 
     @staticmethod
-    def _extract_lyrics_from_page(song_url: str) -> Optional[str]:
+    def _html_lyrics_to_plain(html: str) -> str:
         """
-        Scrapes Genius lyrics containers.
-        Returns cleaned lyrics only.
+        Convert Genius lyrics HTML (from text_format=html API response)
+        to clean plain text, preserving section headers and line breaks.
         """
-        if not song_url:
-            return None
+        soup = BeautifulSoup(html, "html.parser")
 
-        try:
-            response = requests.get(
-                song_url,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 Chrome/120 Safari/537.36"
-                    )
-                },
-                timeout=20,
-            )
+        def walk(node) -> str:
+            buf = []
+            for child in node.children:
+                if isinstance(child, NavigableString):
+                    buf.append(str(child))
+                elif isinstance(child, Tag):
+                    if child.name == "br":
+                        buf.append("\n")
+                    elif child.name in ("a", "span", "b", "i", "em", "strong"):
+                        buf.append(walk(child))
+                    elif child.name in ("p", "div"):
+                        inner = walk(child).strip()
+                        if inner:
+                            buf.append("\n" + inner + "\n")
+            return "".join(buf)
 
-            if response.status_code != 200:
-                return None
+        # Try lyrics containers first (page HTML format)
+        containers = soup.find_all("div", attrs={"data-lyrics-container": "true"})
+        if containers:
+            parts = [walk(c).strip() for c in containers]
+        else:
+            # API html format — the whole response IS the lyrics HTML
+            parts = [walk(soup).strip()]
 
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            containers = soup.find_all(
-                "div",
-                attrs={"data-lyrics-container": "true"},
-            )
-
-            if not containers:
-                return None
-
-            lyrics_parts = []
-
-            for container in containers:
-                for br in container.find_all("br"):
-                    br.replace_with("\n")
-
-                part = container.get_text("\n", strip=True)
-
-                if part:
-                    lyrics_parts.append(part)
-
-            raw_lyrics = "\n\n".join(lyrics_parts)
-            cleaned = SongMetadataFetcher._clean_lyrics(raw_lyrics)
-
-            return cleaned if len(cleaned) > 20 else None
-
-        except Exception as error:
-            logger.warning("Genius lyrics scrape failed: %s", error)
-            return None
+        raw = "\n\n".join(p for p in parts if p)
+        raw = raw.replace("&amp;", "&").replace("&apos;", "'").replace("&#x27;", "'")
+        raw = re.sub(r"[ \t]{2,}", " ", raw)
+        raw = re.sub(r"\n{3,}", "\n\n", raw)
+        raw = "\n".join(line.rstrip() for line in raw.splitlines())
+        # Remove stray Genius annotation numbers
+        raw = re.sub(r"(?<!\w)\d{4,6}(?!\w)", "", raw)
+        return re.sub(r"\n{3,}", "\n\n", raw).strip()
 
     @staticmethod
     def get_genius_data(track: str, artist: str) -> Optional[Dict]:
         """
         Gets Genius song URL, album, context and lyrics.
-        Lyrics are returned for Telegram in-app display.
+
+        Lyrics strategy:
+          1. API text_format=html  — uses Bearer token, bypasses Cloudflare.
+             Works reliably on Vercel / any serverless host.
+          2. Page scrape fallback  — only attempted when running locally
+             and the API html field is empty.
         """
         if not GENIUS_ACCESS_TOKEN:
             logger.warning("GENIUS_ACCESS_TOKEN is missing.")
             return None
 
-        headers = {
-            "Authorization": f"Bearer {GENIUS_ACCESS_TOKEN}",
-        }
+        headers = {"Authorization": f"Bearer {GENIUS_ACCESS_TOKEN}"}
 
         try:
+            # ── Search ────────────────────────────────────────────────────
             search_response = requests.get(
                 f"{GENIUS_API}/search",
                 headers=headers,
@@ -425,15 +370,13 @@ class SongMetadataFetcher:
                 return None
 
             selected = None
-
             for hit in hits[:10]:
-                result = hit.get("result", {})
+                result       = hit.get("result", {})
                 genius_artist = (
                     result.get("primary_artist", {})
                     .get("name", "")
                     .lower()
                 )
-
                 if artist.lower() in genius_artist or genius_artist in artist.lower():
                     selected = result
                     break
@@ -441,16 +384,17 @@ class SongMetadataFetcher:
             if not selected:
                 selected = hits[0].get("result", {})
 
-            song_id = selected.get("id")
+            song_id  = selected.get("id")
             song_url = selected.get("url", "")
 
             if not song_id:
                 return None
 
+            # ── Song detail — request BOTH plain and html formats ─────────
             detail_response = requests.get(
                 f"{GENIUS_API}/songs/{song_id}",
                 headers=headers,
-                params={"text_format": "plain"},
+                params={"text_format": "plain,html"},
                 timeout=15,
             )
             detail_response.raise_for_status()
@@ -461,26 +405,64 @@ class SongMetadataFetcher:
                 .get("song", {})
             )
 
-            result = {
-                "url": song_url,
-                "album": (song.get("album") or {}).get("name", ""),
+            result: Dict = {
+                "url":         song_url,
+                "album":       (song.get("album") or {}).get("name", ""),
                 "description": "",
-                "lyrics": None,
+                "lyrics":      None,
             }
 
-            description = (
-                song.get("description") or {}
-            ).get("plain", "")
-
+            # ── About / description ───────────────────────────────────────
+            description = (song.get("description") or {}).get("plain", "")
             if description:
-                result["description"] = SongMetadataFetcher._clean_about(
-                    description
-                )
+                result["description"] = SongMetadataFetcher._clean_about(description)
 
-            # Actual lyrics for in-app Telegram output
-            if song_url:
-                result["lyrics"] = SongMetadataFetcher._extract_lyrics_from_page(
-                    song_url
+            # ── Lyrics Strategy 1: API html field (Cloudflare-safe) ───────
+            lyrics_html = (song.get("lyrics") or {}).get("html", "")
+            if lyrics_html:
+                plain = SongMetadataFetcher._html_lyrics_to_plain(lyrics_html)
+                plain = SongMetadataFetcher._clean_lyrics(plain)
+                if len(plain) > 30:
+                    result["lyrics"] = plain
+                    logger.info("Genius: lyrics via API html for song %s", song_id)
+
+            # ── Lyrics Strategy 2: page scrape (local fallback only) ──────
+            if not result["lyrics"] and song_url:
+                try:
+                    page_resp = requests.get(
+                        song_url,
+                        headers={
+                            "User-Agent": (
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 Chrome/120 Safari/537.36"
+                            )
+                        },
+                        timeout=20,
+                    )
+                    if page_resp.status_code == 200 and "cf-browser-verification" not in page_resp.text:
+                        soup       = BeautifulSoup(page_resp.text, "html.parser")
+                        containers = soup.find_all(
+                            "div", attrs={"data-lyrics-container": "true"}
+                        )
+                        if containers:
+                            parts = []
+                            for c in containers:
+                                for br in c.find_all("br"):
+                                    br.replace_with("\n")
+                                parts.append(c.get_text("\n", strip=True))
+                            raw    = "\n\n".join(parts)
+                            plain  = SongMetadataFetcher._clean_lyrics(raw)
+                            if len(plain) > 30:
+                                result["lyrics"] = plain
+                                logger.info("Genius: lyrics via page scrape for song %s", song_id)
+                except Exception as scrape_err:
+                    logger.warning("Page scrape fallback failed: %s", scrape_err)
+
+            if not result["lyrics"]:
+                logger.warning(
+                    "Genius: no lyrics found for song %s (lyrics_state=%r)",
+                    song_id,
+                    selected.get("lyrics_state"),
                 )
 
             return result
@@ -492,49 +474,35 @@ class SongMetadataFetcher:
     @staticmethod
     def get_detailed_metadata(
         recording_id: str,
-        song_title: str,
-        artist: str,
+        song_title:   str,
+        artist:       str,
     ) -> Dict:
         metadata = {
-            "title": song_title,
-            "artist": artist,
+            "title":            song_title,
+            "artist":           artist,
             "featured_artists": [],
-            "album": "Unknown",
-            "year": "Unknown",
-            "genre": "Unknown",
-            "description": "",
-            "lyrics": None,
-            "genius_url": None,
-            "wikipedia_url": None,
+            "album":            "Unknown",
+            "year":             "Unknown",
+            "genre":            "Unknown",
+            "description":      "",
+            "lyrics":           None,
+            "genius_url":       None,
+            "wikipedia_url":    None,
         }
 
         # Wikipedia
-        wikipedia = SongMetadataFetcher.get_wikipedia_metadata(
-            song_title,
-            artist,
-        )
-
+        wikipedia = SongMetadataFetcher.get_wikipedia_metadata(song_title, artist)
         if wikipedia:
-            for key in [
-                "artist",
-                "featured_artists",
-                "album",
-                "year",
-                "genre",
-            ]:
+            for key in ["artist", "featured_artists", "album", "year", "genre"]:
                 if wikipedia.get(key):
                     metadata[key] = wikipedia[key]
-
             metadata["wikipedia_url"] = wikipedia.get("url")
 
         # MusicBrainz fallback
         try:
             response = requests.get(
                 f"{MUSICBRAINZ_API}/recording/{recording_id}",
-                params={
-                    "inc": "releases+artist-credits+genres+tags",
-                    "fmt": "json",
-                },
+                params={"inc": "releases+artist-credits+genres+tags", "fmt": "json"},
                 headers={"User-Agent": USER_AGENT},
                 timeout=15,
             )
@@ -545,9 +513,7 @@ class SongMetadataFetcher:
                 credits = musicbrainz.get("artist-credit", [])
                 if len(credits) > 1:
                     metadata["featured_artists"] = [
-                        credit.get("name")
-                        for credit in credits[1:]
-                        if credit.get("name")
+                        c.get("name") for c in credits[1:] if c.get("name")
                     ]
 
             if metadata["genre"] == "Unknown":
@@ -556,37 +522,28 @@ class SongMetadataFetcher:
                     for item in musicbrainz.get("genres", [])[:3]
                     if item.get("name")
                 ]
-
                 if not genres:
                     genres = [
                         item.get("name")
                         for item in musicbrainz.get("tags", [])[:3]
                         if item.get("name")
                     ]
-
                 if genres:
                     metadata["genre"] = ", ".join(genres)
 
             releases = musicbrainz.get("releases", [])
-
             if releases:
                 releases.sort(
-                    key=lambda release: (
-                        bool(COMPILATION_RE.search(release.get("title", ""))),
-                        release.get("date", "9999"),
+                    key=lambda r: (
+                        bool(COMPILATION_RE.search(r.get("title", ""))),
+                        r.get("date", "9999"),
                     )
                 )
-
-                best_release = releases[0]
-
+                best = releases[0]
                 if metadata["album"] == "Unknown":
-                    metadata["album"] = best_release.get(
-                        "title",
-                        "Unknown",
-                    )
-
+                    metadata["album"] = best.get("title", "Unknown")
                 if metadata["year"] == "Unknown":
-                    date = best_release.get("date", "")
+                    date = best.get("date", "")
                     if date:
                         metadata["year"] = date[:4]
 
@@ -595,19 +552,14 @@ class SongMetadataFetcher:
 
         # Genius
         genius = SongMetadataFetcher.get_genius_data(song_title, artist)
-
         if genius:
             if genius.get("description"):
                 metadata["description"] = genius["description"]
-
             if genius.get("lyrics"):
                 metadata["lyrics"] = genius["lyrics"]
-
             if genius.get("url"):
                 metadata["genius_url"] = genius["url"]
-
             genius_album = genius.get("album", "")
-
             if genius_album and (
                 metadata["album"] == "Unknown"
                 or COMPILATION_RE.search(metadata["album"])
@@ -639,7 +591,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "1. Send a song title with artist\n"
         "2. Select your choice\n"
         "3. Tap <b>📝 Wanna Sing Along?</b> for lyrics inside Telegram\n\n"
-        "As EchoAtlas currently supports only Popular* Songs, some Regionals may have been missing from our Service.\nStay with us for Further Upgradation!"
+        "As EchoAtlas currently supports only Popular* Songs, some Regionals may have been missing from our Service.\nStay with us for Further Upgradation!\n\n"
         "<b>Commands</b>\n"
         "/start — Start EchoAtlas\n"
         "/help — Show this guide",
@@ -675,13 +627,10 @@ async def handle_song_search(
     context.user_data["search_results"] = results
 
     keyboard = []
-
     for index, song in enumerate(results):
         artist_text = song["artist"]
-
         if song["featured_artists"]:
             artist_text += " ft. " + ", ".join(song["featured_artists"])
-
         keyboard.append([
             InlineKeyboardButton(
                 f"🎵 {song['title']} — {artist_text}",
@@ -696,15 +645,9 @@ async def handle_song_search(
     )
 
 
-async def send_in_app_lyrics(
-    query,
-    metadata: Dict,
-):
-    """Send lyrics inside Telegram, split safely into messages."""
-
-    lyrics = SongMetadataFetcher._clean_lyrics(
-        metadata.get("lyrics", "")
-    )
+async def send_in_app_lyrics(query, metadata: Dict):
+    """Send lyrics inside Telegram, split safely into chunks."""
+    lyrics = SongMetadataFetcher._clean_lyrics(metadata.get("lyrics", ""))
 
     if not lyrics:
         await query.answer(
@@ -713,7 +656,7 @@ async def send_in_app_lyrics(
         )
         return
 
-    title = metadata.get("title", "Lyrics")
+    title  = metadata.get("title", "Lyrics")
     artist = metadata.get("artist", "")
 
     header = f"📝 <b>{title}</b>"
@@ -722,21 +665,17 @@ async def send_in_app_lyrics(
     header += "\n━━━━━━━━━━━━━━━━━━━━\n\n"
 
     max_length = 3800
-    chunks = []
+    chunks     = []
 
     while lyrics:
         if len(lyrics) <= max_length:
             chunks.append(lyrics)
             break
-
         split_at = lyrics.rfind("\n", 0, max_length)
-
         if split_at < max_length // 2:
             split_at = lyrics.rfind(" ", 0, max_length)
-
         if split_at < 1:
             split_at = max_length
-
         chunks.append(lyrics[:split_at].strip())
         lyrics = lyrics[split_at:].strip()
 
@@ -764,13 +703,13 @@ async def handle_song_selection(
 
     callback_data = query.data
 
-    # ── IN-APP LYRICS BUTTON ────────────────────────────────────────────────
+    # ── IN-APP LYRICS ────────────────────────────────────────────────────────
     if callback_data == "show_lyrics":
         metadata = context.user_data.get("current_metadata", {})
         await send_in_app_lyrics(query, metadata)
         return
 
-    # ── SONG SELECTION ──────────────────────────────────────────────────────
+    # ── SONG SELECTION ───────────────────────────────────────────────────────
     if not callback_data.startswith("select_"):
         return
 
@@ -801,11 +740,8 @@ async def handle_song_selection(
     context.user_data["current_metadata"] = metadata
 
     artist_line = metadata["artist"]
-
     if metadata.get("featured_artists"):
-        artist_line += " ft. " + ", ".join(
-            metadata["featured_artists"]
-        )
+        artist_line += " ft. " + ", ".join(metadata["featured_artists"])
 
     message = (
         "<b>EchoAtlas Music Brief</b>\n"
@@ -825,11 +761,9 @@ async def handle_song_selection(
 
     if metadata.get("description"):
         description = metadata["description"]
-
-        # Telegram message safety
+        # Trim at last complete sentence if description is very long
         if len(description) > 1600:
-            description = description[:1600].rsplit(" ", 1)[0] + "…"
-
+            description = description[:1600].rsplit(". ", 1)[0] + "."
         message += (
             "\n📖 <b>Song Context</b>\n"
             f"<i>{description}</i>\n"
@@ -837,7 +771,6 @@ async def handle_song_selection(
 
     buttons = []
 
-    # THIS BUTTON SHOWS LYRICS INSIDE TELEGRAM
     if metadata.get("lyrics"):
         buttons.append([
             InlineKeyboardButton(
@@ -846,7 +779,6 @@ async def handle_song_selection(
             )
         ])
 
-    # Separate optional external source button
     if metadata.get("genius_url"):
         buttons.append([
             InlineKeyboardButton(
@@ -858,11 +790,7 @@ async def handle_song_selection(
     await query.edit_message_text(
         message,
         parse_mode="HTML",
-        reply_markup=(
-            InlineKeyboardMarkup(buttons)
-            if buttons
-            else None
-        ),
+        reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
         disable_web_page_preview=True,
     )
 
@@ -880,10 +808,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            handle_song_search,
-        )
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_song_search)
     )
     app.add_handler(CallbackQueryHandler(handle_song_selection))
 
@@ -899,18 +824,14 @@ def main():
         print("⚠️ GENIUS_ACCESS_TOKEN is missing. Lyrics may not work.")
 
     if os.name == "nt":
-        asyncio.set_event_loop_policy(
-            asyncio.WindowsSelectorEventLoopPolicy()
-        )
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     app = build_application()
 
     logger.info("EchoAtlas started.")
     print("🎵 EchoAtlas is running...")
 
-    app.run_polling(
-        drop_pending_updates=True,
-    )
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
