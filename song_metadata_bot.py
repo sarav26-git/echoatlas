@@ -334,6 +334,26 @@ class SongMetadataFetcher:
         return re.sub(r"\n{3,}", "\n\n", raw).strip()
 
     @staticmethod
+    def _fetch_lyrics_ovh(artist: str, title: str) -> Optional[str]:
+        """
+        Fetch lyrics from lyrics.ovh — free, no API key, works on Vercel.
+        https://api.lyrics.ovh/v1/{artist}/{title}
+        """
+        try:
+            url = f"https://api.lyrics.ovh/v1/{requests.utils.quote(artist)}/{requests.utils.quote(title)}"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data   = response.json()
+                lyrics = data.get("lyrics", "").strip()
+                if lyrics and len(lyrics) > 20:
+                    return SongMetadataFetcher._clean_lyrics(lyrics)
+            logger.warning("lyrics.ovh: status %s for %s - %s", response.status_code, artist, title)
+            return None
+        except Exception as e:
+            logger.warning("lyrics.ovh fetch failed: %s", e)
+            return None
+
+    @staticmethod
     def get_genius_data(track: str, artist: str) -> Optional[Dict]:
         """
         Gets Genius song URL, album, context and lyrics.
@@ -417,53 +437,15 @@ class SongMetadataFetcher:
             if description:
                 result["description"] = SongMetadataFetcher._clean_about(description)
 
-            # ── Lyrics Strategy 1: API html field (Cloudflare-safe) ───────
-            lyrics_html = (song.get("lyrics") or {}).get("html", "")
-            if lyrics_html:
-                plain = SongMetadataFetcher._html_lyrics_to_plain(lyrics_html)
-                plain = SongMetadataFetcher._clean_lyrics(plain)
-                if len(plain) > 30:
-                    result["lyrics"] = plain
-                    logger.info("Genius: lyrics via API html for song %s", song_id)
-
-            # ── Lyrics Strategy 2: page scrape (local fallback only) ──────
-            if not result["lyrics"] and song_url:
-                try:
-                    page_resp = requests.get(
-                        song_url,
-                        headers={
-                            "User-Agent": (
-                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                "AppleWebKit/537.36 Chrome/120 Safari/537.36"
-                            )
-                        },
-                        timeout=20,
-                    )
-                    if page_resp.status_code == 200 and "cf-browser-verification" not in page_resp.text:
-                        soup       = BeautifulSoup(page_resp.text, "html.parser")
-                        containers = soup.find_all(
-                            "div", attrs={"data-lyrics-container": "true"}
-                        )
-                        if containers:
-                            parts = []
-                            for c in containers:
-                                for br in c.find_all("br"):
-                                    br.replace_with("\n")
-                                parts.append(c.get_text("\n", strip=True))
-                            raw    = "\n\n".join(parts)
-                            plain  = SongMetadataFetcher._clean_lyrics(raw)
-                            if len(plain) > 30:
-                                result["lyrics"] = plain
-                                logger.info("Genius: lyrics via page scrape for song %s", song_id)
-                except Exception as scrape_err:
-                    logger.warning("Page scrape fallback failed: %s", scrape_err)
-
-            if not result["lyrics"]:
-                logger.warning(
-                    "Genius: no lyrics found for song %s (lyrics_state=%r)",
-                    song_id,
-                    selected.get("lyrics_state"),
-                )
+            # ── Lyrics: lyrics.ovh (free, no key, Vercel-safe) ──────────
+            lyrics_fetched = SongMetadataFetcher._fetch_lyrics_ovh(
+                artist, track
+            )
+            if lyrics_fetched:
+                result["lyrics"] = lyrics_fetched
+                logger.info("Lyrics: fetched via lyrics.ovh for %s - %s", artist, track)
+            else:
+                logger.warning("Lyrics: lyrics.ovh returned nothing for %s - %s", artist, track)
 
             return result
 
