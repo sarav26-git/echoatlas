@@ -608,6 +608,51 @@ async def handle_song_search(
 
     context.user_data["search_results"] = results
 
+    # Auto-select if top result is a perfect match (score 100)
+    if results[0].get("score", 0) == 100:
+        await loading_message.edit_text("⏳ Building your music brief...")
+        song = results[0]
+        metadata = SongMetadataFetcher.get_detailed_metadata(
+            song["id"], song["title"], song["artist"],
+        )
+        context.user_data["current_metadata"] = metadata
+
+        artist_line = metadata["artist"]
+        if metadata.get("featured_artists"):
+            artist_line += " ft. " + ", ".join(metadata["featured_artists"])
+
+        message = (
+            "<b>EchoAtlas Music Brief</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"📌 <b>Title:</b> {metadata['title']}\n"
+            f"🎤 <b>Artist:</b> {artist_line}\n"
+        )
+        if metadata["album"] != "Unknown":
+            message += f"💿 <b>Album:</b> {metadata['album']}\n"
+        if metadata["year"] != "Unknown":
+            message += f"📅 <b>Year:</b> {metadata['year']}\n"
+        if metadata["genre"] != "Unknown":
+            message += f"🎼 <b>Genre:</b> {metadata['genre'].title()}\n"
+        if metadata.get("description"):
+            description = metadata["description"]
+            if len(description) > 1600:
+                description = description[:1600].rsplit(". ", 1)[0] + "."
+            message += f"\n📖 <b>Song Context</b>\n<i>{description}</i>\n"
+
+        buttons = []
+        if metadata.get("lyrics"):
+            buttons.append([InlineKeyboardButton("📝 Wanna Sing Along?", callback_data="show_lyrics")])
+        if metadata.get("genius_url"):
+            buttons.append([InlineKeyboardButton("🔗 Open on Genius", url=metadata["genius_url"])])
+
+        await loading_message.edit_text(
+            message,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
+            disable_web_page_preview=True,
+        )
+        return
+
     keyboard = []
     for index, song in enumerate(results):
         artist_text = song["artist"]
